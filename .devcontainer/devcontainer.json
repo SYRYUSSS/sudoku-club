@@ -1,0 +1,29 @@
+{
+  "name": "Sudoku Club",
+  "dockerComposeFile": "compose.yaml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "forwardPorts": [5173, 3000],
+  "portsAttributes": {
+    "5173": {
+      "label": "Sudoku Club",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    },
+    "3000": {
+      "label": "Rails API",
+      "visibility": "private"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/ruby:1": {
+      "version": "3.3"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "postCreateCommand": "bundle install && npm --prefix frontend install",
+  "postStartCommand": "bash .devcontainer/start-app.sh"
+}

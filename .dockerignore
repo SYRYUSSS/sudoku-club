@@ -1,0 +1,6 @@
+.git
+log
+tmp
+vendor
+node_modules
+frontend

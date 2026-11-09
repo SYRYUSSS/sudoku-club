@@ -1,0 +1,9 @@
+/log/*
+/tmp/*
+/storage/*
+/vendor/bundle
+/frontend/node_modules
+/frontend/dist
+.env*
+!.env.example
+.DS_Store

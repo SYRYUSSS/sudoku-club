@@ -1,0 +1,20 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+  host: <%= ENV.fetch("DB_HOST", "db") %>
+  port: <%= ENV.fetch("DB_PORT", 5432) %>
+  username: <%= ENV.fetch("DB_USER", "sudoku") %>
+  password: <%= ENV.fetch("DB_PASSWORD", "sudoku") %>
+
+development:
+  <<: *default
+  database: <%= ENV.fetch("DB_NAME", "sudoku_development") %>
+
+test:
+  <<: *default
+  database: sudoku_test
+
+production:
+  <<: *default
+  database: <%= ENV.fetch("DB_NAME", "sudoku_production") %>
