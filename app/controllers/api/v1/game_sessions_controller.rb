@@ -5,7 +5,7 @@ module Api
       before_action :set_game, only: %i[show update]
 
       def create
-        @game = current_user.game_sessions.new(game_params)
+        @game = current_user.game_sessions.new(create_game_params)
         if @game.save
           render json: @game, status: :created
         else
@@ -25,7 +25,7 @@ module Api
       end
 
       def update
-        if @game.update(game_params)
+        if @game.update(update_game_params)
           render json: @game
         else
           render json: { errors: @game.errors.full_messages }, status: :unprocessable_entity
@@ -38,10 +38,23 @@ module Api
         @game = current_user.game_sessions.find(params[:id])
       end
 
-      def game_params
+      def create_game_params
         source = params.require(:game)
         permitted = source.permit(:difficulty, :mistakes, :elapsed_seconds, :completed, :player_name).to_h
         %w[puzzle solution board notes].each do |key|
+          permitted[key] = source[key].as_json if source.key?(key)
+        end
+        permitted
+      end
+
+      def update_game_params
+        source = params.require(:game)
+        if @game.completed?
+          return source.permit(:player_name).to_h
+        end
+
+        permitted = source.permit(:mistakes, :elapsed_seconds, :completed, :player_name).to_h
+        %w[board notes].each do |key|
           permitted[key] = source[key].as_json if source.key?(key)
         end
         permitted

@@ -9,8 +9,21 @@ if [ "${CODESPACES:-false}" = "true" ]; then
 fi
 
 export FRONTEND_ORIGIN="$frontend_origin"
-export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(bundle exec rails secret)}"
+if [ -z "${SECRET_KEY_BASE:-}" ]; then
+  if [ ! -f /tmp/.sudoku_secret_key_base ]; then
+    bundle exec rails secret > /tmp/.sudoku_secret_key_base
+    chmod 600 /tmp/.sudoku_secret_key_base
+  fi
+  SECRET_KEY_BASE="$(cat /tmp/.sudoku_secret_key_base)"
+fi
+export SECRET_KEY_BASE
 
 bundle exec rails db:prepare
-nohup bundle exec rails server -b 0.0.0.0 -p 3000 > /tmp/sudoku-rails.log 2>&1 &
-nohup env VITE_API_PROXY_TARGET=http://localhost:3000 npm --prefix frontend run dev -- --host 0.0.0.0 --port 5173 > /tmp/sudoku-vite.log 2>&1 &
+
+if ! pgrep -f "puma.*3000|rails server" > /dev/null 2>&1; then
+  nohup bundle exec rails server -b 0.0.0.0 -p 3000 > /tmp/sudoku-rails.log 2>&1 &
+fi
+
+if ! pgrep -f "vite.*5173" > /dev/null 2>&1; then
+  nohup env VITE_API_PROXY_TARGET=http://localhost:3000 npm --prefix frontend run dev -- --host 0.0.0.0 --port 5173 > /tmp/sudoku-vite.log 2>&1 &
+fi

@@ -50,6 +50,14 @@ class AuthAndGameFlowTest < ActionDispatch::IntegrationTest
     result = response.parsed_body.find { |entry| entry["id"] == game_id }
     assert_equal "Ирина", result.fetch("player_name")
     assert_equal 42, result.fetch("elapsed_seconds")
+
+    get "/api/v1/leaderboard", params: { difficulty: "hard" }, as: :json
+    assert_response :success
+    assert_empty response.parsed_body
+
+    get "/api/v1/leaderboard", params: { difficulty: "easy" }, as: :json
+    assert_response :success
+    assert_equal game_id, response.parsed_body.first.fetch("id")
   end
 
   test "guests cannot create games and another account cannot open a saved game" do

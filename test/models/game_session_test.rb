@@ -37,4 +37,15 @@ class GameSessionTest < ActiveSupport::TestCase
     assert_not changed_clue.valid?
     assert_includes changed_clue.errors.attribute_names, :puzzle
   end
+
+  test "locks completed games and prevents decreasing elapsed time" do
+    game = GameSession.create!(**game_attributes(user: @user, elapsed_seconds: 50))
+    assert_not game.update(elapsed_seconds: 10)
+    assert_includes game.errors.attribute_names, :elapsed_seconds
+
+    assert game.update(board: SOLUTION.map(&:dup), completed: true, elapsed_seconds: 60)
+    assert_not game.update(elapsed_seconds: 70)
+    assert game.update(player_name: "Чемпион")
+    assert_equal "Чемпион", game.reload.player_name
+  end
 end

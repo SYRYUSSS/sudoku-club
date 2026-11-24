@@ -11,6 +11,9 @@ class GameSession < ApplicationRecord
   validate :grids_have_valid_shape
   validate :given_cells_match_solution
   validate :completed_board_is_solved
+  validate :immutable_fields_unchanged, on: :update
+  validate :completed_game_is_locked, on: :update
+  validate :elapsed_seconds_monotonic, on: :update
 
   after_commit :broadcast_leaderboard, if: :leaderboard_changed?
 
@@ -90,6 +93,30 @@ class GameSession < ApplicationRecord
 
   def completed_board_is_solved
     errors.add(:completed, "можно отметить только решенную партию") if completed? && !solved?
+  end
+
+  def immutable_fields_unchanged
+    %i[puzzle solution difficulty].each do |attr|
+      errors.add(attr, "нельзя изменить после начала партии") if will_save_change_to_attribute?(attr)
+    end
+  end
+
+  def completed_game_is_locked
+    return unless completed_in_database
+
+    locked_attrs = %i[board notes mistakes elapsed_seconds completed]
+    if locked_attrs.any? { |attr| will_save_change_to_attribute?(attr) }
+      errors.add(:base, "завершенную партию нельзя изменить")
+    end
+  end
+
+  def elapsed_seconds_monotonic
+    return unless will_save_change_to_attribute?(:elapsed_seconds)
+    return if elapsed_seconds_in_database.nil? || elapsed_seconds.nil?
+
+    if elapsed_seconds < elapsed_seconds_in_database
+      errors.add(:elapsed_seconds, "не может уменьшаться")
+    end
   end
 
   def leaderboard_changed?

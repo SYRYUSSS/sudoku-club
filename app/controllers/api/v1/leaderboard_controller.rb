@@ -2,7 +2,11 @@ module Api
   module V1
     class LeaderboardController < ApplicationController
       def index
-        games = GameSession.completed.includes(:user).order(:elapsed_seconds, :created_at).limit(20)
+        games = GameSession.completed.includes(:user)
+        if GameSession::DIFFICULTIES.include?(params[:difficulty])
+          games = games.where(difficulty: params[:difficulty])
+        end
+        games = games.order(:elapsed_seconds, :created_at).limit(20)
         render json: games.map { |game|
           {
             id: game.id,
