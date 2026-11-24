@@ -45,7 +45,7 @@ class GameSessionTest < ActiveSupport::TestCase
 
     assert game.update(board: SOLUTION.map(&:dup), completed: true, elapsed_seconds: 60)
     assert_not game.update(elapsed_seconds: 70)
-    assert game.update(player_name: "Чемпион")
+    assert game.reload.update(player_name: "Чемпион")
     assert_equal "Чемпион", game.reload.player_name
   end
 end

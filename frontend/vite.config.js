@@ -9,8 +9,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     proxy: {
-      '/api': { target: apiProxyTarget },
-      '/cable': { target: apiProxyTarget, ws: true },
+      '/api': { target: apiProxyTarget, changeOrigin: true },
+      '/cable': { target: apiProxyTarget, ws: true, changeOrigin: true },
     },
   },
 })

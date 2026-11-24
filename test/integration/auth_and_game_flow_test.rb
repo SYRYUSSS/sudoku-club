@@ -51,11 +51,11 @@ class AuthAndGameFlowTest < ActionDispatch::IntegrationTest
     assert_equal "Ирина", result.fetch("player_name")
     assert_equal 42, result.fetch("elapsed_seconds")
 
-    get "/api/v1/leaderboard", params: { difficulty: "hard" }, as: :json
+    get "/api/v1/leaderboard?difficulty=hard", as: :json
     assert_response :success
     assert_empty response.parsed_body
 
-    get "/api/v1/leaderboard", params: { difficulty: "easy" }, as: :json
+    get "/api/v1/leaderboard?difficulty=easy", as: :json
     assert_response :success
     assert_equal game_id, response.parsed_body.first.fetch("id")
   end

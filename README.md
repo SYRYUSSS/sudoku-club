@@ -26,6 +26,41 @@ Sudoku Club — браузерная игра для одного игрока �
 - **База данных:** PostgreSQL 16, Active Record, JSONB-сетки и заметки, миграции и индексы.
 - **Запуск:** Docker Compose поднимает PostgreSQL, Rails API и Vite; приложение открывается по адресу `http://localhost:5173`.
 
+## Схема базы данных
+
+```mermaid
+erDiagram
+    users ||--o{ game_sessions : "has_many"
+
+    users {
+        bigint id PK
+        string name "NOT NULL, 2..30"
+        string email UK "NOT NULL, lower(email) UNIQUE"
+        string password_digest "NOT NULL, bcrypt"
+        datetime created_at "NOT NULL"
+        datetime updated_at "NOT NULL"
+    }
+
+    game_sessions {
+        bigint id PK
+        bigint user_id FK "INDEX, -> users.id"
+        string difficulty "NOT NULL, easy|medium|hard|expert"
+        jsonb puzzle "NOT NULL, 9x9"
+        jsonb solution "NOT NULL, 9x9"
+        jsonb board "NOT NULL, 9x9"
+        jsonb notes "NOT NULL, 9x9"
+        integer mistakes "NOT NULL, 0..3"
+        integer elapsed_seconds "NOT NULL, INDEX"
+        boolean completed "NOT NULL, INDEX"
+        string player_name "max 30"
+        datetime created_at "NOT NULL"
+        datetime updated_at "NOT NULL"
+    }
+```
+
+- **Связи:** `game_sessions.user_id` ссылается на `users.id` (foreign key); при удалении пользователя его партии удаляются (`dependent: :destroy`).
+- **Индексы:** уникальный `index_users_on_lower_email` по `lower(email)`, а также индексы `user_id`, `completed` и `elapsed_seconds` в `game_sessions` для быстрого поиска активной партии и сортировки таблицы лидеров.
+
 ## Подводные камни и сложная логика
 
 - **Генерация головоломок:** внешний датасет не нужен. Алгоритм строит полное решение, удаляет клетки и проверяет, что у получившейся задачи осталось ровно одно решение. Проверка уникальности увеличивает время генерации сложных уровней.

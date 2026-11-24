@@ -21,9 +21,15 @@ export SECRET_KEY_BASE
 bundle exec rails db:prepare
 
 if ! pgrep -f "puma.*3000|rails server" > /dev/null 2>&1; then
-  nohup bundle exec rails server -b 0.0.0.0 -p 3000 > /tmp/sudoku-rails.log 2>&1 &
+  setsid nohup bundle exec rails server -b 0.0.0.0 -p 3000 < /dev/null > /tmp/sudoku-rails.log 2>&1 &
 fi
 
 if ! pgrep -f "vite.*5173" > /dev/null 2>&1; then
-  nohup env VITE_API_PROXY_TARGET=http://localhost:3000 npm --prefix frontend run dev -- --host 0.0.0.0 --port 5173 > /tmp/sudoku-vite.log 2>&1 &
+  if ! node -e "require('./frontend/node_modules/rollup/dist/native.js')" > /dev/null 2>&1; then
+    rm -rf frontend/node_modules
+    npm --prefix frontend install --no-package-lock --no-audit --no-fund
+  fi
+  setsid nohup env VITE_API_PROXY_TARGET=http://localhost:3000 npm --prefix frontend run dev -- --host 0.0.0.0 --port 5173 < /dev/null > /tmp/sudoku-vite.log 2>&1 &
 fi
+
+sleep 2
