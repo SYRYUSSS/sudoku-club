@@ -9,6 +9,15 @@ export const DIFFICULTIES = {
 
 const boxIndex = (row, col) => Math.floor(row / 3) * 3 + Math.floor(col / 3)
 
+function shuffle(items) {
+  const result = [...items]
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
+  }
+  return result
+}
+
 function candidates(board, row, col) {
   const used = new Set()
   for (let index = 0; index < 9; index += 1) {
@@ -38,9 +47,9 @@ function fillGrid(board) {
     }
   }
   if (!best) return true
-  choices.sort(() => Math.random() - 0.5)
+  const shuffled = shuffle(choices)
   const [row, col] = best
-  for (const value of choices) {
+  for (const value of shuffled) {
     board[row][col] = value
     if (fillGrid(board)) return true
   }
@@ -85,7 +94,7 @@ export function createPuzzle(difficulty = 'easy') {
   const solution = Array.from({ length: 9 }, () => Array(9).fill(0))
   fillGrid(solution)
   const puzzle = solution.map((row) => [...row])
-  const cells = range.flatMap((row) => range.map((col) => [row, col])).sort(() => Math.random() - 0.5)
+  const cells = shuffle(range.flatMap((row) => range.map((col) => [row, col])))
   const target = DIFFICULTIES[difficulty]?.removed ?? DIFFICULTIES.easy.removed
   let removed = 0
   for (const [row, col] of cells) {

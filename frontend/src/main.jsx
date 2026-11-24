@@ -11,15 +11,10 @@ import AuthScreen from './AuthScreen'
 import UiKit from './UiKit'
 import './style.css'
 
-const STORAGE_KEY = 'sudoku-current-game-v1'
 const EMPTY_NOTES = () => Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => []))
 const cloneBoard = (board) => board.map((row) => [...row])
 const cloneNotes = (notes) => notes.map((row) => row.map((cell) => [...cell]))
 const prettyDifficulty = (difficulty) => DIFFICULTIES[difficulty]?.label || 'Легкий'
-
-function readSaved() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') } catch { return null }
-}
 
 function readAccountGame(userId) {
   try { return JSON.parse(localStorage.getItem(`sudoku-user-${userId}-game-v1`) || 'null') } catch { return null }
@@ -55,8 +50,7 @@ function normalizeGame(data) {
 }
 
 function App() {
-  const saved = useRef(readSaved()).current
-  const [game, setGame] = useState(() => saved?.game ? normalizeGame(saved.game) : createPuzzle('easy'))
+  const [game, setGame] = useState(() => createPuzzle('easy'))
   const [gameId, setGameId] = useState(null)
   const [currentUser, setCurrentUser] = useState(null)
   const [accountLoading, setAccountLoading] = useState(true)
@@ -66,6 +60,8 @@ function App() {
   const [notesMode, setNotesMode] = useState(false)
   const [paused, setPaused] = useState(false)
   const [leaderboard, setLeaderboard] = useState([])
+  const [leaderboardFilter, setLeaderboardFilter] = useState('all')
+  const [filteredLeaderboard, setFilteredLeaderboard] = useState([])
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [showNameDialog, setShowNameDialog] = useState(false)
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('sudoku-player-name') || '')
@@ -127,7 +123,7 @@ function App() {
       if (response.ok) {
         const remote = await response.json()
         const local = readAccountGame(user.id)
-        const localIsNewer = local?.game && local.savedAt > Date.parse(remote.updated_at)
+        const localIsNewer = local?.game && local.id === remote.id && !local.game.completed && local.savedAt > Date.parse(remote.updated_at)
         const restored = normalizeGame(localIsNewer ? local.game : remote)
         setGame(restored)
         setGameId(remote.id)
@@ -135,7 +131,8 @@ function App() {
         if (localIsNewer) await persistApi(restored, remote.id)
       } else {
         const local = readAccountGame(user.id)
-        setGame(local?.game && !local.game.completed ? normalizeGame(local.game) : createPuzzle('easy'))
+        const nextGame = local?.game && !local.game.completed ? normalizeGame(local.game) : createPuzzle('easy')
+        setGame(nextGame)
       }
     } catch {
       setApiOnline(false)
@@ -146,7 +143,7 @@ function App() {
     setPaused(false)
     setAccountReady(true)
     setAccountLoading(false)
-  }, [])
+  }, [persistApi])
 
   const logout = useCallback(async () => {
     try { await apiFetch('/auth/logout', { method: 'DELETE' }) } catch { /* end the local view even when offline */ }
@@ -201,24 +198,42 @@ function App() {
     return () => clearInterval(timer)
   }, [gameId, currentUser, accountReady, persistApi])
 
+  const fetchLeaderboard = useCallback(async (difficulty = 'all') => {
+    try {
+      const query = difficulty !== 'all' ? `?difficulty=${encodeURIComponent(difficulty)}` : ''
+      const response = await apiFetch(`/leaderboard${query}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (difficulty === 'all') setLeaderboard(data)
+        setFilteredLeaderboard(data)
+      }
+    } catch { /* local game still works when the API is unavailable */ }
+  }, [])
+
+  const leaderboardFilterRef = useRef(leaderboardFilter)
+  useEffect(() => { leaderboardFilterRef.current = leaderboardFilter }, [leaderboardFilter])
+
   useEffect(() => {
-    const fetchBoard = async () => {
-      try {
-        const response = await apiFetch('/leaderboard')
-        if (response.ok) setLeaderboard(await response.json())
-      } catch { /* local game still works when the API is unavailable */ }
-    }
-    fetchBoard()
+    fetchLeaderboard('all')
     const cableUrl = `${API_BASE.replace(/\/api\/v1\/?$/, '').replace(/^http/, 'ws')}/cable`
     const consumer = createConsumer(cableUrl)
     const subscription = consumer.subscriptions.create('LeaderboardChannel', {
-      received: (message) => { if (message.type === 'refresh') fetchBoard() },
+      received: (message) => {
+        if (message.type === 'refresh') {
+          fetchLeaderboard('all')
+          if (leaderboardFilterRef.current !== 'all') fetchLeaderboard(leaderboardFilterRef.current)
+        }
+      },
     })
     return () => {
       subscription.unsubscribe()
       consumer.disconnect()
     }
-  }, [])
+  }, [fetchLeaderboard])
+
+  useEffect(() => {
+    if (showLeaderboard) fetchLeaderboard(leaderboardFilter)
+  }, [showLeaderboard, leaderboardFilter, fetchLeaderboard])
 
   useEffect(() => {
     if (!currentUser || !accountReady || paused || game.completed || game.mistakes >= 3) return undefined
@@ -248,40 +263,47 @@ function App() {
     return group
   }, [row, col])
 
-  const numberCounts = useMemo(() => Array.from({ length: 10 }, (_, value) => value ? game.board.flat().filter((cell) => cell === value).length : 0), [game.board])
+  const numberCounts = useMemo(
+    () => Array.from({ length: 10 }, (_, value) => value
+      ? game.board.reduce((sum, line, r) => sum + line.filter((cell, c) => cell === value && game.solution[r][c] === value).length, 0)
+      : 0),
+    [game.board, game.solution],
+  )
   const conflicts = useMemo(() => new Set(game.board.flatMap((line, r) => line.flatMap((value, c) => isConflict(game.board, r, c) || (value && !game.puzzle[r][c] && value !== game.solution[r][c]) ? [`${r}-${c}`] : []))), [game.board, game.puzzle, game.solution])
 
   const remember = (current) => ({ board: cloneBoard(current.board), notes: cloneNotes(current.notes), mistakes: current.mistakes })
-  const edit = useCallback((transform) => {
-    setGame((current) => {
-      if (current.completed || current.mistakes >= 3 || paused) return current
-      if (current.puzzle[row][col]) return current
-      const previous = remember(current)
-      history.current.past = [...history.current.past.slice(-99), previous]
-      history.current.future = []
-      return transform(current)
-    })
+
+  const applyBoardUpdate = useCallback((transform) => {
+    const current = gameRef.current
+    if (current.completed || current.mistakes >= 3 || paused) return null
+    if (current.puzzle[row][col]) return null
+    const previous = remember(current)
+    history.current.past = [...history.current.past.slice(-99), previous]
+    history.current.future = []
+    const updated = transform(current)
+    setGame(updated)
+    return updated
   }, [row, col, paused])
 
   const enterValue = useCallback((value) => {
-    if (paused || game.completed || game.mistakes >= 3 || game.puzzle[row][col]) return
+    const current = gameRef.current
+    if (paused || current.completed || current.mistakes >= 3 || current.puzzle[row][col]) return
     if (notesMode && value) {
-      edit((current) => {
-        const notes = cloneNotes(current.notes)
+      applyBoardUpdate((state) => {
+        const notes = cloneNotes(state.notes)
         notes[row][col] = notes[row][col].includes(value) ? notes[row][col].filter((note) => note !== value) : [...notes[row][col], value].sort()
-        return { ...current, notes }
+        return { ...state, notes }
       })
       return
     }
-    edit((current) => {
-      const board = cloneBoard(current.board)
-      const notes = cloneNotes(current.notes)
-      if (value && current.solution[row][col] !== value) {
-        setMistakeMark(`${row}-${col}`)
-        setTimeout(() => setMistakeMark(null), 650)
+    const isWrong = Boolean(value && current.solution[row][col] !== value)
+    const updated = applyBoardUpdate((state) => {
+      const board = cloneBoard(state.board)
+      const notes = cloneNotes(state.notes)
+      if (isWrong) {
         board[row][col] = value
         notes[row][col] = []
-        return { ...current, board, notes, mistakes: Math.min(3, current.mistakes + 1) }
+        return { ...state, board, notes, mistakes: Math.min(3, state.mistakes + 1) }
       }
       board[row][col] = value
       notes[row][col] = []
@@ -294,66 +316,83 @@ function App() {
         const startCol = Math.floor(col / 3) * 3
         for (let r = startRow; r < startRow + 3; r += 1) for (let c = startCol; c < startCol + 3; c += 1) notes[r][c] = notes[r][c].filter((note) => note !== value)
       }
-      const completed = board.every((line, r) => line.every((cell, c) => cell === current.solution[r][c]))
-      const updated = { ...current, board, notes, completed }
-      if (completed) {
-        setPaused(false)
-        setShowNameDialog(true)
-        setTimeout(() => apiFetch('/leaderboard').then((response) => response.json()).then(setLeaderboard).catch(() => {}), 1000)
-      }
-      return updated
+      const completed = board.every((line, r) => line.every((cell, c) => cell === state.solution[r][c]))
+      return { ...state, board, notes, completed }
     })
-  }, [row, col, notesMode, paused, game, edit])
+    if (!updated) return
+    if (isWrong) {
+      setMistakeMark(`${row}-${col}`)
+      setTimeout(() => setMistakeMark(null), 650)
+    }
+    if (updated.completed) {
+      setPaused(false)
+      setShowNameDialog(true)
+      setTimeout(() => fetchLeaderboard('all'), 1000)
+    }
+  }, [row, col, notesMode, paused, applyBoardUpdate, fetchLeaderboard])
 
   const clearCell = useCallback(() => enterValue(0), [enterValue])
 
   const useHint = useCallback(() => {
-    const selectedCanFill = !game.puzzle[row][col] && game.board[row][col] !== game.solution[row][col]
-    const target = selectedCanFill ? [row, col] : game.board.flatMap((line, r) => line.map((value, c) => value !== game.solution[r][c] ? [r, c] : null).filter(Boolean))[0]
+    const current = gameRef.current
+    if (paused || current.completed || current.mistakes >= 3) return
+    const selectedCanFill = !current.puzzle[row][col] && current.board[row][col] !== current.solution[row][col]
+    const target = selectedCanFill ? [row, col] : current.board.flatMap((line, r) => line.map((value, c) => value !== current.solution[r][c] ? [r, c] : null).filter(Boolean))[0]
     if (!target) return
     const [r, c] = target
     setSelected([r, c])
     setNotesMode(false)
-    setGame((current) => {
-      const previous = remember(current)
-      history.current.past = [...history.current.past.slice(-99), previous]
-      history.current.future = []
-      const board = cloneBoard(current.board)
-      const notes = cloneNotes(current.notes)
-      const value = current.solution[r][c]
-      board[r][c] = value
-      notes[r][c] = []
-      for (let index = 0; index < 9; index += 1) {
-        notes[r][index] = notes[r][index].filter((note) => note !== value)
-        notes[index][c] = notes[index][c].filter((note) => note !== value)
-      }
-      const startRow = Math.floor(r / 3) * 3
-      const startCol = Math.floor(c / 3) * 3
-      for (let rr = startRow; rr < startRow + 3; rr += 1) for (let cc = startCol; cc < startCol + 3; cc += 1) notes[rr][cc] = notes[rr][cc].filter((note) => note !== value)
-      const completed = board.every((line, rr) => line.every((cell, cc) => cell === current.solution[rr][cc]))
-      if (completed) setShowNameDialog(true)
-      return { ...current, board, notes, completed }
-    })
+    const previous = remember(current)
+    history.current.past = [...history.current.past.slice(-99), previous]
+    history.current.future = []
+    const board = cloneBoard(current.board)
+    const notes = cloneNotes(current.notes)
+    const value = current.solution[r][c]
+    board[r][c] = value
+    notes[r][c] = []
+    for (let index = 0; index < 9; index += 1) {
+      notes[r][index] = notes[r][index].filter((note) => note !== value)
+      notes[index][c] = notes[index][c].filter((note) => note !== value)
+    }
+    const startRow = Math.floor(r / 3) * 3
+    const startCol = Math.floor(c / 3) * 3
+    for (let rr = startRow; rr < startRow + 3; rr += 1) for (let cc = startCol; cc < startCol + 3; cc += 1) notes[rr][cc] = notes[rr][cc].filter((note) => note !== value)
+    const completed = board.every((line, rr) => line.every((cell, cc) => cell === current.solution[rr][cc]))
+    setGame({ ...current, board, notes, completed })
+    if (completed) {
+      setPaused(false)
+      setShowNameDialog(true)
+    }
     showToast('Подсказка добавлена')
-  }, [game, row, col, selected, showToast])
+  }, [paused, row, col, showToast])
 
   const undo = useCallback(() => {
+    const current = gameRef.current
+    if (paused || current.completed || current.mistakes >= 3) return
     const previous = history.current.past.pop()
     if (!previous) return
-    history.current.future.push(remember(gameRef.current))
-    setGame((current) => ({ ...current, ...previous, completed: false }))
+    history.current.future.push(remember(current))
+    setGame((state) => ({ ...state, ...previous, completed: false }))
     setShowNameDialog(false)
-  }, [])
+  }, [paused])
   const redo = useCallback(() => {
+    const current = gameRef.current
+    if (paused || current.completed || current.mistakes >= 3) return
     const next = history.current.future.pop()
     if (!next) return
-    history.current.past.push(remember(gameRef.current))
-    const completed = next.board.every((line, r) => line.every((cell, c) => cell === gameRef.current.solution[r][c]))
-    setGame((current) => ({ ...current, ...next, completed }))
+    history.current.past.push(remember(current))
+    const completed = next.board.every((line, r) => line.every((cell, c) => cell === current.solution[r][c]))
+    setGame((state) => ({ ...state, ...next, completed }))
     if (completed) setShowNameDialog(true)
-  }, [])
+  }, [paused])
 
-  const newGame = useCallback((difficulty = game.difficulty) => {
+  const newGame = useCallback((difficulty = gameRef.current.difficulty) => {
+    const current = gameRef.current
+    const hasProgress = !current.completed && current.mistakes < 3 && (
+      current.board.some((line, r) => line.some((val, c) => !current.puzzle[r][c] && val !== 0))
+      || current.notes.some((line) => line.some((cell) => cell.length > 0))
+    )
+    if (hasProgress && !window.confirm('Начать новую партию? Текущий прогресс будет потерян.')) return
     const next = createPuzzle(difficulty)
     setGame(next)
     history.current = { past: [], future: [] }
@@ -363,8 +402,9 @@ function App() {
     setPaused(false)
     setNotesMode(false)
     setShowNameDialog(false)
+    if (currentUser && accountReady) persistApi(next, null)
     showToast(`${prettyDifficulty(difficulty)} уровень готов`)
-  }, [game.difficulty, showToast])
+  }, [currentUser, accountReady, persistApi, showToast])
 
   useEffect(() => {
     if (!currentUser || !accountReady || screen !== 'game') return undefined
@@ -444,7 +484,7 @@ function App() {
           <div className="input-card">
             <div className="input-top"><div><div className="section-kicker">ВАШ ХОД</div><h3>Выберите цифру</h3></div><div className="input-tools"><button className={`tool-button ${notesMode ? 'tool-active' : ''}`} onClick={() => setNotesMode((value) => !value)} aria-pressed={notesMode}><Pencil size={15} /> Заметки <kbd>N</kbd></button><button className="tool-button" onClick={clearCell} title="Стереть клетку"><Eraser size={15} /> Стереть</button></div></div>
             <div className="number-pad">{Array.from({ length: 9 }, (_, index) => index + 1).map((number) => <button key={number} className={`number-key ${selectedValue === number ? 'number-active' : ''} ${numberCounts[number] >= 9 ? 'number-complete' : ''}`} onClick={() => enterValue(number)} disabled={numberCounts[number] >= 9}><span>{number}</span><small>{numberCounts[number] >= 9 ? <Check size={12} /> : `${9 - numberCounts[number]}`}</small></button>)}</div>
-            <div className="action-row"><div className="mistakes"><span className="mistake-title">ОШИБКИ</span><div className="mistake-dots">{[0, 1, 2].map((index) => <span key={index} className={index < game.mistakes ? 'mistake-used' : ''} />)}</div><span className="mistake-count">{game.mistakes} / 3</span></div><div className="history-actions"><button className="action-icon" onClick={undo} disabled={!history.current.past.length} title="Отменить"><Undo2 /></button><button className="action-icon" onClick={redo} disabled={!history.current.future.length} title="Повторить"><ArrowRight /></button></div></div>
+            <div className="action-row"><div className="mistakes"><span className="mistake-title">ОШИБКИ</span><div className="mistake-dots">{[0, 1, 2].map((index) => <span key={index} className={index < game.mistakes ? 'mistake-used' : ''} />)}</div><span className="mistake-count">{game.mistakes} / 3</span></div><div className="history-actions"><button className="action-icon" onClick={undo} disabled={!active || !history.current.past.length} title="Отменить"><Undo2 /></button><button className="action-icon" onClick={redo} disabled={!active || !history.current.future.length} title="Повторить"><ArrowRight /></button></div></div>
           </div>
         </div>
 
@@ -453,7 +493,7 @@ function App() {
 
           <div className="level-card"><div className="level-card-heading"><div><div className="section-kicker">ВЫБЕРИТЕ ТЕМП</div><h3>Сложность</h3></div><span className="level-spark"><Sparkles size={16} /></span></div><div className="difficulty-list">{Object.entries(DIFFICULTIES).map(([key, item], index) => <button key={key} onClick={() => newGame(key)} className={`difficulty-option ${game.difficulty === key ? 'difficulty-selected' : ''}`}><span className={`level-number level-${key}`}>{String(index + 1).padStart(2, '0')}</span><span className="level-copy"><b>{item.label}</b><small>{['Разогреться', 'Войти в ритм', 'Проверить себя', 'Для смелых'][index]}</small></span><span className="level-radio">{game.difficulty === key && <i />}</span></button>)}</div><div className="difficulty-meter"><div><span>Сложность партии</span><b>{difficultyPercent}%</b></div><span className="meter-track"><i style={{ width: `${difficultyPercent}%` }} /></span></div></div>
 
-          <div className="hint-card"><span className="hint-decoration">✳</span><div className="hint-icon"><Lightbulb size={19} /></div><div className="hint-content"><b>Застряли?</b><span>Иногда нужен всего<br />один правильный шаг.</span><button onClick={useHint}>Получить подсказку <ArrowRight size={14} /></button></div></div>
+          <div className="hint-card"><span className="hint-decoration">✳</span><div className="hint-icon"><Lightbulb size={19} /></div><div className="hint-content"><b>Застряли?</b><span>Иногда нужен всего<br />один правильный шаг.</span><button onClick={useHint} disabled={!active}>Получить подсказку <ArrowRight size={14} /></button></div></div>
 
           <div className="leader-mini"><div className="leader-heading"><div><div className="section-kicker">НА ЭТОЙ НЕДЕЛЕ</div><h3>Таблица лидеров</h3></div><button className="see-all" onClick={() => setShowLeaderboard(true)}>Все <ArrowRight size={13} /></button></div>{leaderboard.length ? <div className="leader-list">{leaderboard.slice(0, 3).map((item, index) => <div className="leader-row" key={item.id}><span className={`rank rank-${index + 1}`}>{index === 0 ? <Crown size={13} /> : String(index + 1).padStart(2, '0')}</span><span className="leader-avatar">{(item.player_name || 'И').charAt(0).toUpperCase()}</span><span className="leader-name"><b>{item.player_name || 'Игрок'}</b><small>{prettyDifficulty(item.difficulty)}</small></span><span className="leader-time">{formatTime(item.elapsed_seconds)}</span></div>)}</div> : <div className="leader-empty"><Trophy size={19} /><span>Пока тихо — ваш рекорд<br />может стать первым.</span></div>}<button className="leader-cta" onClick={() => setShowLeaderboard(true)}><Trophy size={14} /> Вся таблица лидеров</button></div>
         </aside>
@@ -463,7 +503,7 @@ function App() {
 
       <footer className="footer"><span>© 2026 sudoku club</span><span>Сделано для ясной головы <span className="footer-heart">♥</span></span></footer>
 
-      {showLeaderboard && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowLeaderboard(false) }}><section className="dialog leaderboard-dialog"><button className="dialog-close" onClick={() => setShowLeaderboard(false)} aria-label="Закрыть"><X /></button><div className="dialog-icon gold"><Trophy /></div><div className="section-kicker">ЛУЧШЕЕ ВРЕМЯ</div><h2>Таблица лидеров</h2><p className="dialog-subtitle">Каждая решенная партия заслуживает места здесь.</p>{leaderboard.length ? <div className="leaderboard-full">{leaderboard.map((item, index) => <div className="leaderboard-entry" key={item.id}><span className={`rank rank-${index + 1}`}>{index === 0 ? <Crown size={14} /> : String(index + 1).padStart(2, '0')}</span><span className="leader-avatar">{(item.player_name || 'И').charAt(0).toUpperCase()}</span><span className="leader-name"><b>{item.player_name || 'Игрок'}</b><small>{prettyDifficulty(item.difficulty)}</small></span><span className="leader-time">{formatTime(item.elapsed_seconds)}</span></div>)}</div> : <div className="dialog-empty"><Award size={25} /><span>Таблица пока пуста.<br />Решите судоку, чтобы открыть счет!</span></div>}<button className="primary-button full-button" onClick={() => setShowLeaderboard(false)}>Продолжить игру</button></section></div>}
+      {showLeaderboard && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowLeaderboard(false) }}><section className="dialog leaderboard-dialog"><button className="dialog-close" onClick={() => setShowLeaderboard(false)} aria-label="Закрыть"><X /></button><div className="dialog-icon gold"><Trophy /></div><div className="section-kicker">ЛУЧШЕЕ ВРЕМЯ</div><h2>Таблица лидеров</h2><p className="dialog-subtitle">Каждая решенная партия заслуживает места здесь.</p><div className="leaderboard-filters" role="tablist" aria-label="Фильтр по сложности">{[['all', 'Все'], ...Object.entries(DIFFICULTIES).map(([key, item]) => [key, item.label])].map(([key, label]) => <button key={key} role="tab" aria-selected={leaderboardFilter === key} className={`filter-pill ${leaderboardFilter === key ? 'filter-active' : ''}`} onClick={() => setLeaderboardFilter(key)}>{label}</button>)}</div>{filteredLeaderboard.length ? <div className="leaderboard-full">{filteredLeaderboard.map((item, index) => <div className="leaderboard-entry" key={item.id}><span className={`rank rank-${index + 1}`}>{index === 0 ? <Crown size={14} /> : String(index + 1).padStart(2, '0')}</span><span className="leader-avatar">{(item.player_name || 'И').charAt(0).toUpperCase()}</span><span className="leader-name"><b>{item.player_name || 'Игрок'}</b><small>{prettyDifficulty(item.difficulty)}</small></span><span className="leader-time">{formatTime(item.elapsed_seconds)}</span></div>)}</div> : <div className="dialog-empty"><Award size={25} /><span>Таблица пока пуста.<br />Решите судоку, чтобы открыть счет!</span></div>}<button className="primary-button full-button" onClick={() => setShowLeaderboard(false)}>Продолжить игру</button></section></div>}
 
       {showNameDialog && <div className="modal-backdrop"><form className="dialog name-dialog" onSubmit={saveName}><span className="confetti">✦</span><div className="dialog-icon success"><Check /></div><div className="section-kicker">БЛЕСТЯЩЕЕ РЕШЕНИЕ</div><h2>Вы справились!</h2><p className="dialog-subtitle">Ваше время — {formatTime(game.elapsedSeconds)}. Добавим результат в таблицу?</p><label className="name-label" htmlFor="player-name">Как вас записать?</label><input id="player-name" className="name-input" value={playerName} onChange={(event) => setPlayerName(event.target.value)} maxLength={30} placeholder="Ваше имя" autoFocus /><button className="primary-button full-button" type="submit">Сохранить результат <ArrowRight size={15} /></button><button className="text-button" type="button" onClick={() => setShowNameDialog(false)}>Не сейчас</button></form></div>}
 

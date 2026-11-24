@@ -276,7 +276,11 @@ a { color: inherit; text-decoration: none; }
 .dialog-subtitle { margin: 0 auto 20px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .leaderboard-dialog { text-align: left; }
 .leaderboard-dialog .dialog-icon, .leaderboard-dialog > .section-kicker, .leaderboard-dialog > h2, .leaderboard-dialog > .dialog-subtitle { text-align: center; }
-.leaderboard-full { max-height: 350px; margin: 20px 0; overflow: auto; }
+.leaderboard-filters { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-bottom: 14px; }
+.filter-pill { padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 9px; font-weight: 600; cursor: pointer; transition: .15s; }
+.filter-pill:hover { border-color: var(--violet); color: var(--violet); }
+.filter-pill.filter-active { border-color: var(--violet); background: var(--violet-pale); color: var(--violet); }
+.leaderboard-full { max-height: 350px; margin: 14px 0 20px; overflow: auto; }
 .leaderboard-entry { padding: 10px 3px; }
 .leaderboard-entry .leader-avatar { width: 31px; height: 31px; }
 .dialog-empty { display: grid; justify-items: center; gap: 9px; padding: 20px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); font-size: 10px; line-height: 1.6; text-align: center; }
